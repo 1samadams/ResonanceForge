@@ -13,6 +13,12 @@ set "PY=%VENV_DIR%\Scripts\python.exe"
 
 if not "%~1"=="" goto :dispatch
 
+REM On first entry, auto-check the remote for updates (silent fetch).
+if not defined RF_AUTOCHECK_DONE (
+    set RF_AUTOCHECK_DONE=1
+    call :auto_check
+)
+
 :menu
 cls
 echo ============================================================
@@ -127,20 +133,58 @@ if "%~1"=="" goto :menu
 goto :eof
 
 REM ------------------------------------------------------------
+REM Self-updating update target.
+REM
+REM Problem: `git pull` rewrites this .bat on disk while cmd.exe is
+REM still reading from it by byte offset, which causes garbage execution
+REM on Windows. Fix: copy ourselves to %TEMP% first and re-invoke from
+REM there with a hidden subcommand that does the actual pull, then
+REM relaunches the (now updated) original script.
 :update
 where git >nul 2>nul || (echo [ERROR] git not found. & pause & goto :menu)
-pushd "%PROJECT_DIR%"
-git fetch origin %BRANCH% || (popd & pause & goto :menu)
-git pull origin %BRANCH% || (popd & pause & goto :menu)
-popd
-if exist "%PY%" (
-    "%PY%" -m pip install -e "%PROJECT_DIR%[gui]"
-) else (
-    echo [WARN] venv missing; run Setup.
+if /I not "%~2"=="__from_temp" (
+    copy /Y "%~f0" "%TEMP%\rf_update.bat" >nul
+    cmd /c ""%TEMP%\rf_update.bat" update __from_temp "%~f0""
+    REM After the temp updater finishes, exit this (potentially mangled)
+    REM instance so the user can launch the fresh copy.
+    exit /b 0
 )
-pause
-if "%~1"=="" goto :menu
-goto :eof
+REM We're now running from %TEMP% — safe to overwrite the original.
+set "ORIG=%~3"
+set "ORIG_DIR=%~dp3"
+pushd "%ORIG_DIR%"
+git fetch origin %BRANCH% || (popd & echo Update failed. & pause & exit /b 1)
+git pull origin %BRANCH% || (popd & echo Update failed. & pause & exit /b 1)
+popd
+if exist "%ORIG_DIR%.venv\Scripts\python.exe" (
+    "%ORIG_DIR%.venv\Scripts\python.exe" -m pip install -e "%ORIG_DIR%[gui]"
+) else (
+    echo [WARN] venv missing; run Setup after relaunch.
+)
+echo.
+echo Update complete. Relaunching ResonanceForge...
+start "" cmd /k "%ORIG%"
+exit /b 0
+
+REM ------------------------------------------------------------
+REM Silent remote check; if HEAD differs from origin/<branch>, prompt
+REM the user to update right away.
+:auto_check
+where git >nul 2>nul || exit /b 0
+if not exist "%PROJECT_DIR%\.git" exit /b 0
+pushd "%PROJECT_DIR%" >nul
+git fetch origin %BRANCH% --quiet 2>nul
+for /f %%H in ('git rev-parse HEAD 2^>nul') do set "LOCAL_SHA=%%H"
+for /f %%H in ('git rev-parse origin/%BRANCH% 2^>nul') do set "REMOTE_SHA=%%H"
+popd >nul
+if "%LOCAL_SHA%"=="" exit /b 0
+if "%REMOTE_SHA%"=="" exit /b 0
+if /I "%LOCAL_SHA%"=="%REMOTE_SHA%" exit /b 0
+echo.
+echo *** A new version of ResonanceForge is available on origin/%BRANCH%.
+choice /C YN /M "Update now"
+if errorlevel 2 exit /b 0
+goto :update
 
 REM ------------------------------------------------------------
 :doctor
