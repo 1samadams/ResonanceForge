@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["tkinterdnd2==0.4.2"]
+gui = ["tkinterdnd2==0.4.2", "sv-ttk==2.6.0"]
 metadata = ["mutagen==1.47.0"]
 test = ["pytest>=8.0"]
 
