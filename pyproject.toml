@@ -9,11 +9,13 @@ dependencies = [
     "soundfile==0.12.1",
     "pedalboard==0.9.12",
     "pyloudnorm==0.1.1",
+    "scipy==1.11.4",
 ]
 
 [project.optional-dependencies]
 gui = ["tkinterdnd2==0.4.2"]
-test = ["pytest>=8.0", "scipy>=1.11"]
+metadata = ["mutagen==1.47.0"]
+test = ["pytest>=8.0"]
 
 [project.scripts]
 resonanceforge = "resonanceforge.cli:main"

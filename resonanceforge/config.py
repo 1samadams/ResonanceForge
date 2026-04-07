@@ -61,17 +61,41 @@ class LoudnessConfig:
 
 
 @dataclass
+class QualityConfig:
+    """Optional cleanup / repair stages and delivery conversion."""
+    # Silence handling
+    trim_silence: bool = False
+    trim_threshold_db: float = -60.0
+    auto_fade_tail: bool = False         # if true, detect decay tail and fade
+    # Hum removal
+    hum_notch_hz: Optional[int] = None   # 50 or 60 (None disables)
+    hum_notch_q: float = 30.0
+    hum_notch_depth_db: float = -24.0
+    # Static de-esser (narrow-band dip around harsh frequency)
+    deesser_enabled: bool = False
+    deesser_freq_hz: float = 6500.0
+    deesser_depth_db: float = -3.0
+    deesser_q: float = 3.0
+    # Delivery sample-rate conversion (None = keep input SR)
+    target_sample_rate: Optional[int] = None
+
+
+@dataclass
 class PipelineConfig:
     eq: EQConfig = field(default_factory=EQConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     stereo: StereoConfig = field(default_factory=StereoConfig)
     saturation: SaturationConfig = field(default_factory=SaturationConfig)
     loudness: LoudnessConfig = field(default_factory=LoudnessConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
     output_format: Literal["wav", "flac"] = "wav"
     output_bit_depth: int = 24
     dither: bool = True              # TPDF dither on 16/24-bit PCM output
     fade_in_ms: float = 10.0
     fade_out_ms: float = 50.0
+    preserve_metadata: bool = True   # carry tags through when possible
+    album_mode: bool = False         # two-pass consistent loudness across batch
+    gain_offset_db: float = 0.0      # manual per-track trim
 
     # ---- serialization ----
     def to_dict(self) -> dict[str, Any]:
