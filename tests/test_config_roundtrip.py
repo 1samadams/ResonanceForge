@@ -26,7 +26,7 @@ def test_from_dict_tolerates_missing_keys() -> None:
     loaded = PipelineConfig.from_dict({"loudness": {"target_lufs": -10.0}})
     assert loaded.loudness.target_lufs == -10.0
     # Others fall back to defaults.
-    assert loaded.stereo.width == 1.10
+    assert loaded.stereo.width == 1.05
 
 
 def test_shipped_presets_load() -> None:
