@@ -10,6 +10,7 @@ Features:
 """
 from __future__ import annotations
 
+import json
 import queue
 import threading
 import traceback
@@ -19,6 +20,10 @@ from typing import Optional
 
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
+
+
+SETTINGS_PATH = Path.home() / ".resonanceforge" / "settings.json"
+PRESETS_DIR = Path(__file__).resolve().parent / "presets"
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
@@ -50,6 +55,7 @@ class ResonanceForgeGUI:
 
         self.queue: "queue.Queue[_Msg]" = queue.Queue()
         self.worker: Optional[threading.Thread] = None
+        self.cancel_event = threading.Event()
         self.files: list[Path] = []
         self.output_dir = tk.StringVar(value=str(Path.cwd() / "masters"))
 
@@ -62,6 +68,8 @@ class ResonanceForgeGUI:
         self.sat_mix = tk.DoubleVar(value=0.25)
 
         self._build_ui()
+        self._load_settings()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_queue()
 
     # ---------- UI ----------
@@ -82,7 +90,10 @@ class ResonanceForgeGUI:
         ttk.Label(header, text="Files", font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
         ttk.Button(header, text="Add Files…", command=self._add_files).pack(side=tk.RIGHT, padx=2)
         ttk.Button(header, text="Add Folder…", command=self._add_folder).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(header, text="Remove", command=self._remove_selected).pack(side=tk.RIGHT, padx=2)
         ttk.Button(header, text="Clear", command=self._clear).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(header, text="Load Preset…", command=self._load_preset).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(header, text="Save Preset…", command=self._save_preset).pack(side=tk.RIGHT, padx=2)
 
         cols = ("file", "status", "lufs_in", "lufs_out", "tp")
         self.tree = ttk.Treeview(top, columns=cols, show="headings", height=10)
@@ -109,6 +120,8 @@ class ResonanceForgeGUI:
         if _HAS_DND:
             self.tree.drop_target_register(DND_FILES)  # type: ignore[attr-defined]
             self.tree.dnd_bind("<<Drop>>", self._on_drop)  # type: ignore[attr-defined]
+        self.tree.bind("<Delete>", lambda _e: self._remove_selected())
+        self.tree.bind("<BackSpace>", lambda _e: self._remove_selected())
 
         # Middle: settings
         settings = ttk.LabelFrame(self.root, text="Mastering settings", padding=10)
@@ -139,6 +152,8 @@ class ResonanceForgeGUI:
         actions.pack(fill=tk.X)
         self.progress = ttk.Progressbar(actions, mode="determinate")
         self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.cancel_btn = ttk.Button(actions, text="Cancel", command=self._cancel, state=tk.DISABLED)
+        self.cancel_btn.pack(side=tk.RIGHT, padx=(0, 4))
         self.run_btn = ttk.Button(actions, text="Start Processing", command=self._start)
         self.run_btn.pack(side=tk.RIGHT)
 
@@ -221,6 +236,110 @@ class ResonanceForgeGUI:
                 self._add_one(path)
 
     # ---------- processing ----------
+    # ---------- presets / remove / cancel ----------
+    def _remove_selected(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        sel = list(self.tree.selection())
+        if not sel:
+            return
+        keep_indices = [int(i) for i in self.tree.get_children() if i not in sel]
+        new_files = [self.files[i] for i in keep_indices if i < len(self.files)]
+        self.files = new_files
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for idx, p in enumerate(self.files):
+            self.tree.insert("", tk.END, iid=str(idx),
+                             values=(str(p), "Pending", "—", "—", "—"),
+                             tags=("pending",))
+
+    def _cancel(self) -> None:
+        if self.worker and self.worker.is_alive():
+            self.cancel_event.set()
+            self._log("Cancel requested — will stop after current file.")
+            self.status_var.set("Cancelling…")
+
+    def _load_preset(self) -> None:
+        initial = str(PRESETS_DIR) if PRESETS_DIR.exists() else str(Path.cwd())
+        path = filedialog.askopenfilename(
+            title="Load preset",
+            initialdir=initial,
+            filetypes=[("Preset JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            cfg = PipelineConfig.load(path)
+        except Exception as e:
+            messagebox.showerror("Preset", f"Failed to load preset:\n{e}")
+            return
+        self._apply_config(cfg)
+        self._log(f"Loaded preset: {path}")
+
+    def _save_preset(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Save preset",
+            defaultextension=".json",
+            filetypes=[("Preset JSON", "*.json")],
+        )
+        if not path:
+            return
+        try:
+            self._build_config().save(path)
+            self._log(f"Saved preset: {path}")
+        except Exception as e:
+            messagebox.showerror("Preset", f"Failed to save preset:\n{e}")
+
+    def _apply_config(self, cfg: PipelineConfig) -> None:
+        self.target_lufs.set(cfg.loudness.target_lufs)
+        self.true_peak.set(cfg.loudness.true_peak_db)
+        self.width.set(cfg.stereo.width)
+        self.sat_mode.set(cfg.saturation.mode)
+        self.sat_drive.set(cfg.saturation.drive_db)
+        self.sat_mix.set(cfg.saturation.mix)
+
+    # ---------- settings persistence ----------
+    def _gather_settings(self) -> dict:
+        return {
+            "output_dir": self.output_dir.get(),
+            "config": self._build_config().to_dict(),
+            "geometry": self.root.winfo_geometry(),
+        }
+
+    def _load_settings(self) -> None:
+        if not SETTINGS_PATH.exists():
+            return
+        try:
+            data = json.loads(SETTINGS_PATH.read_text())
+        except Exception:
+            return
+        if "output_dir" in data:
+            self.output_dir.set(data["output_dir"])
+        if "config" in data:
+            try:
+                self._apply_config(PipelineConfig.from_dict(data["config"]))
+            except Exception:
+                pass
+        if "geometry" in data:
+            try:
+                self.root.geometry(data["geometry"])
+            except tk.TclError:
+                pass
+
+    def _save_settings(self) -> None:
+        try:
+            SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SETTINGS_PATH.write_text(json.dumps(self._gather_settings(), indent=2))
+        except Exception:
+            pass
+
+    def _on_close(self) -> None:
+        self._save_settings()
+        if self.worker and self.worker.is_alive():
+            self.cancel_event.set()
+        self.root.destroy()
+
+    # ---------- processing ----------
     def _build_config(self) -> PipelineConfig:
         cfg = PipelineConfig()
         cfg.loudness.target_lufs = float(self.target_lufs.get())
@@ -245,9 +364,11 @@ class ResonanceForgeGUI:
             return
 
         cfg = self._build_config()
+        self.cancel_event.clear()
         self.progress["value"] = 0
         self.progress["maximum"] = len(self.files)
         self.run_btn.state(["disabled"])
+        self.cancel_btn.state(["!disabled"])
         self._log(f"Starting batch: {len(self.files)} file(s) → {out_dir}")
         self.status_var.set("Processing…")
 
@@ -258,11 +379,15 @@ class ResonanceForgeGUI:
 
     def _run_batch(self, files: list[Path], out_dir: Path, cfg: PipelineConfig) -> None:
         pipe = Pipeline(cfg)
+        ext = "." + cfg.output_format
         for idx, src in enumerate(files):
+            if self.cancel_event.is_set():
+                self.queue.put(_Msg("log", text="Batch cancelled."))
+                break
             self.queue.put(_Msg("status", index=idx, text="Processing"))
             self.queue.put(_Msg("log", text=f"[{idx + 1}/{len(files)}] {src.name} — reading & mastering"))
             try:
-                dest = out_dir / (src.stem + "_mastered.wav")
+                dest = out_dir / (src.stem + "_mastered" + ext)
                 report = pipe.process(src, dest)
                 self.queue.put(_Msg("done", index=idx, report=report))
                 self.queue.put(_Msg("log", text=(
@@ -296,7 +421,8 @@ class ResonanceForgeGUI:
         elif msg.kind == "status":
             if msg.text == "__finished__":
                 self.run_btn.state(["!disabled"])
-                self.status_var.set("Done.")
+                self.cancel_btn.state(["disabled"])
+                self.status_var.set("Cancelled." if self.cancel_event.is_set() else "Done.")
                 return
             iid = str(msg.index)
             if self.tree.exists(iid):

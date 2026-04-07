@@ -1,17 +1,19 @@
 [project]
 name = "resonanceforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Mastering / post-production DSP pipeline"
 requires-python = ">=3.10"
+# Pinned for mastering reproducibility — bump deliberately.
 dependencies = [
-    "numpy>=1.24",
-    "soundfile>=0.12",
-    "pedalboard>=0.9",
-    "pyloudnorm>=0.1.1",
+    "numpy==1.26.4",
+    "soundfile==0.12.1",
+    "pedalboard==0.9.12",
+    "pyloudnorm==0.1.1",
 ]
 
 [project.optional-dependencies]
-gui = ["tkinterdnd2>=0.4"]
+gui = ["tkinterdnd2==0.4.2"]
+test = ["pytest>=8.0", "scipy>=1.11"]
 
 [project.scripts]
 resonanceforge = "resonanceforge.cli:main"
@@ -23,3 +25,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["resonanceforge*"]
+
+[tool.setuptools.package-data]
+resonanceforge = ["presets/*.json"]

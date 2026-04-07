@@ -1,0 +1,9 @@
+{
+  "loudness": {"target_lufs": -16.0, "true_peak_db": -2.0, "remeasure_after_limit": true},
+  "stereo": {"width": 1.00, "bass_mono_hz": 200.0},
+  "saturation": {"enabled": true, "mode": "tube", "drive_db": 4.0, "mix": 0.2, "tilt_hz": 2000.0, "exciter_band_hz": 6000.0},
+  "eq": {"highpass_hz": 35.0, "lowpass_hz": 16000.0, "tilt_pivot_hz": 1000.0, "tilt_db": 0.0},
+  "output_format": "wav",
+  "output_bit_depth": 24,
+  "dither": true
+}

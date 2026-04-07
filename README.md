@@ -34,9 +34,13 @@ input → HPF 30Hz → LPF 18kHz → Tilt EQ → Saturation
 ## Install
 
 ```bash
-pip install -e .           # core + CLI
-pip install -e .[gui]      # adds drag-and-drop support (tkinterdnd2)
+pip install -e .              # core + CLI
+pip install -e .[gui]         # adds drag-and-drop support (tkinterdnd2)
+pip install -e .[test]        # adds pytest + scipy for the test suite
 ```
+
+macOS/Linux: `scripts/setup.sh` bootstraps a `.venv` and installs `[gui,test]`.
+Windows: `resonanceforge.bat setup` does the same.
 
 ## CLI
 
@@ -62,6 +66,18 @@ Flags:
 | `--sat-mode` | tube | `tube`, `tape`, or `exciter` |
 | `--sat-drive` | 6.0 | Saturation drive (dB) |
 | `--sat-mix` | 0.25 | Parallel dry/wet mix (0..1) |
+| `--preset` | – | Load a `PipelineConfig` JSON preset |
+| `--format` | wav | `wav` or `flac` |
+| `--bit-depth` | 24 | `16`, `24`, or `32` (float) |
+| `--no-dither` | off | Disable TPDF dither on PCM export |
+| `--dry-run` | off | Measure + report without writing files |
+| `--report` | – | Append one JSON `ProcessReport` per line |
+
+### Presets
+
+Shipped in `resonanceforge/presets/`: `streaming_-14.json`,
+`club_-9.json`, `vinyl.json`. Use with `--preset PATH` or
+**Load Preset…** in the GUI. CLI flags override preset values.
 
 ## GUI
 
@@ -107,6 +123,18 @@ resonanceforge/
 ├── cli.py           # argparse CLI (single file or directory)
 └── gui.py           # Tkinter GUI with drag-and-drop
 ```
+
+## Testing
+
+```bash
+pip install -e .[test]
+pytest -q
+```
+
+The smoke suite generates signals in `tmp_path`, runs the full pipeline on
+mono and stereo, and asserts LUFS within tolerance, no clipping, no
+NaN/Inf, and valid FLAC output. CI runs on push
+(`.github/workflows/ci.yml`).
 
 ## License
 
