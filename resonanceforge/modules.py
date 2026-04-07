@@ -32,49 +32,52 @@ def build_eq(cfg: EQConfig) -> Pedalboard:
     ])
 
 
-def apply_multiband(audio: np.ndarray, cfg: DynamicsConfig, sample_rate: float) -> np.ndarray:
-    """3-band multiband compressor using pedalboard filters + Compressor.
+def _lr4_lowpass(cutoff_hz: float) -> Pedalboard:
+    """Linkwitz–Riley 4th-order lowpass = two cascaded Butterworth 2nd-order."""
+    return Pedalboard([
+        LowpassFilter(cutoff_frequency_hz=cutoff_hz),
+        LowpassFilter(cutoff_frequency_hz=cutoff_hz),
+    ])
 
-    Splits with LP/HP pairs at the two crossovers, compresses each band
-    independently, then sums. Not linear-phase, but adequate for a
-    transparent glue-style master bus.
+
+def _lr4_highpass(cutoff_hz: float) -> Pedalboard:
+    return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=cutoff_hz),
+        HighpassFilter(cutoff_frequency_hz=cutoff_hz),
+    ])
+
+
+def _compressor(band: "MultibandBand") -> Compressor:  # type: ignore[name-defined]
+    return Compressor(
+        threshold_db=band.threshold_db,
+        ratio=band.ratio,
+        attack_ms=band.attack_ms,
+        release_ms=band.release_ms,
+    )
+
+
+def apply_multiband(audio: np.ndarray, cfg: DynamicsConfig, sample_rate: float) -> np.ndarray:
+    """3-band multiband compressor with Linkwitz–Riley 4th-order crossovers.
+
+    Bands are split with cascaded Butterworth pairs (LR4) at the two
+    crossover frequencies so that summing the bands is phase-coherent at
+    the crossover points. Each band is compressed independently, then the
+    three bands are summed back to the master bus.
     """
     work = audio.T.astype(np.float32, copy=False)
+    sr = float(sample_rate)
     f_lo = float(cfg.low_mid_crossover_hz)
     f_hi = float(cfg.mid_high_crossover_hz)
 
-    low_chain = Pedalboard([
-        LowpassFilter(cutoff_frequency_hz=f_lo),
-        Compressor(
-            threshold_db=cfg.low_band.threshold_db,
-            ratio=cfg.low_band.ratio,
-            attack_ms=cfg.low_band.attack_ms,
-            release_ms=cfg.low_band.release_ms,
-        ),
-    ])
-    mid_chain = Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=f_lo),
-        LowpassFilter(cutoff_frequency_hz=f_hi),
-        Compressor(
-            threshold_db=cfg.mid_band.threshold_db,
-            ratio=cfg.mid_band.ratio,
-            attack_ms=cfg.mid_band.attack_ms,
-            release_ms=cfg.mid_band.release_ms,
-        ),
-    ])
-    high_chain = Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=f_hi),
-        Compressor(
-            threshold_db=cfg.high_band.threshold_db,
-            ratio=cfg.high_band.ratio,
-            attack_ms=cfg.high_band.attack_ms,
-            release_ms=cfg.high_band.release_ms,
-        ),
-    ])
+    low = _lr4_lowpass(f_lo)(work, sr)
+    mid_hp = _lr4_highpass(f_lo)(work, sr)
+    mid = _lr4_lowpass(f_hi)(mid_hp, sr)
+    high = _lr4_highpass(f_hi)(work, sr)
 
-    low = low_chain(work, sample_rate)
-    mid = mid_chain(work, sample_rate)
-    high = high_chain(work, sample_rate)
+    low = Pedalboard([_compressor(cfg.low_band)])(low, sr)
+    mid = Pedalboard([_compressor(cfg.mid_band)])(mid, sr)
+    high = Pedalboard([_compressor(cfg.high_band)])(high, sr)
+
     summed = low + mid + high
     return summed.T.astype(audio.dtype, copy=False)
 
@@ -88,13 +91,21 @@ def build_limiter(cfg: DynamicsConfig) -> Pedalboard:
     ])
 
 
+def ensure_stereo(audio: np.ndarray) -> np.ndarray:
+    """Upmix mono to stereo by duplicating; passthrough for stereo."""
+    if audio.ndim == 1:
+        return np.stack([audio, audio], axis=0)
+    if audio.shape[0] == 1:
+        return np.repeat(audio, 2, axis=0)
+    return audio
+
+
 def apply_stereo(audio: np.ndarray, cfg: StereoConfig, sample_rate: float) -> np.ndarray:
     """Mid/Side width control + bass mono-ization.
 
-    `audio` shape: (channels, samples). Mono passes through unchanged.
+    `audio` shape: (channels, samples). Mono is upmixed to stereo first.
     """
-    if audio.ndim == 1 or audio.shape[0] == 1:
-        return audio
+    audio = ensure_stereo(audio)
 
     left, right = audio[0], audio[1]
     mid = 0.5 * (left + right)

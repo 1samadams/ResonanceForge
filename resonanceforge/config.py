@@ -1,16 +1,17 @@
 """Configuration dataclasses for the mastering pipeline."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal, Optional
+import json
+from dataclasses import dataclass, field, asdict, fields, is_dataclass
+from pathlib import Path
+from typing import Any, Literal
 
 
 @dataclass
 class EQConfig:
     highpass_hz: float = 30.0
     lowpass_hz: float = 18000.0
-    # Tilt EQ: pivots around `tilt_pivot_hz`. Positive dB tilts brighter
-    # (boost highs / cut lows by the same amount), negative tilts darker.
+    # Tilt EQ: symmetric low-cut / high-boost around `tilt_pivot_hz`.
     tilt_pivot_hz: float = 1000.0
     tilt_db: float = 0.5
 
@@ -25,7 +26,7 @@ class MultibandBand:
 
 @dataclass
 class DynamicsConfig:
-    # Crossover frequencies for a 3-band split (low/mid/high).
+    # Crossovers for a 3-band split (low/mid/high). Linkwitz–Riley 4th-order.
     low_mid_crossover_hz: float = 200.0
     mid_high_crossover_hz: float = 2500.0
     low_band: MultibandBand = field(default_factory=lambda: MultibandBand(-20.0, 2.0, 30.0, 200.0))
@@ -37,30 +38,26 @@ class DynamicsConfig:
 
 @dataclass
 class StereoConfig:
-    # +10% side gain for width (1.10). <1 narrower, >1 wider.
-    width: float = 1.10
-    bass_mono_hz: float = 120.0   # mono-ize content below this frequency
+    width: float = 1.10              # +10% Side by default
+    bass_mono_hz: float = 120.0
 
 
 @dataclass
 class SaturationConfig:
-    """Harmonic coloration / tonal warmth.
-
-    Purely a creative mastering effect: adds even/odd harmonics for tonal
-    character (tube/tape/exciter flavors). Not tuned against any detector.
-    """
+    """Harmonic coloration / tonal warmth (tube/tape/exciter)."""
     enabled: bool = True
     mode: Literal["tube", "tape", "exciter"] = "tube"
     drive_db: float = 6.0
-    mix: float = 0.25              # 0..1 parallel blend
-    tilt_hz: float = 2000.0        # pre-emphasis pivot; highs driven harder
-    exciter_band_hz: float = 6000.0  # for 'exciter' mode: only drive > this
+    mix: float = 0.25
+    tilt_hz: float = 2000.0
+    exciter_band_hz: float = 6000.0
 
 
 @dataclass
 class LoudnessConfig:
     target_lufs: float = -14.0
     true_peak_db: float = -1.0
+    remeasure_after_limit: bool = True
 
 
 @dataclass
@@ -70,7 +67,45 @@ class PipelineConfig:
     stereo: StereoConfig = field(default_factory=StereoConfig)
     saturation: SaturationConfig = field(default_factory=SaturationConfig)
     loudness: LoudnessConfig = field(default_factory=LoudnessConfig)
-    output_format: Literal["wav", "flac", "mp3"] = "wav"
+    output_format: Literal["wav", "flac"] = "wav"
     output_bit_depth: int = 24
+    dither: bool = True              # TPDF dither on 16/24-bit PCM output
     fade_in_ms: float = 10.0
     fade_out_ms: float = 50.0
+
+    # ---- serialization ----
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def save(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
+        return _from_dict(cls, data)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "PipelineConfig":
+        return cls.from_dict(json.loads(Path(path).read_text()))
+
+
+def _from_dict(klass, data):
+    """Recursive dataclass loader tolerant of missing/extra keys."""
+    import typing
+    if not is_dataclass(klass) or not isinstance(data, dict):
+        return data
+    try:
+        hints = typing.get_type_hints(klass)
+    except Exception:
+        hints = {f.name: f.type for f in fields(klass)}
+    kwargs = {}
+    for f in fields(klass):
+        if f.name not in data:
+            continue
+        raw = data[f.name]
+        t = hints.get(f.name, f.type)
+        if is_dataclass(t) and isinstance(raw, dict):
+            kwargs[f.name] = _from_dict(t, raw)
+        else:
+            kwargs[f.name] = raw
+    return klass(**kwargs)

@@ -1,0 +1,8 @@
+{
+  "loudness": {"target_lufs": -9.0, "true_peak_db": -1.0, "remeasure_after_limit": true},
+  "stereo": {"width": 1.05, "bass_mono_hz": 150.0},
+  "saturation": {"enabled": true, "mode": "tape", "drive_db": 7.0, "mix": 0.3, "tilt_hz": 1800.0, "exciter_band_hz": 6000.0},
+  "output_format": "wav",
+  "output_bit_depth": 24,
+  "dither": true
+}
