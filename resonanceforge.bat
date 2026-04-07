@@ -86,6 +86,17 @@ if not exist "%PROJECT_DIR%pyproject.toml" (
     git clone --branch %BRANCH% %REPO_URL% "%PROJECT_DIR%" || exit /b 1
 ) else (
     echo     repo already present.
+    REM Fast-forward an existing clone so we don't install against stale
+    REM pinned deps. Network failures here are non-fatal.
+    if exist "%PROJECT_DIR%.git" (
+        where git >nul 2>nul && (
+            echo     refreshing from origin/%BRANCH%...
+            pushd "%PROJECT_DIR%" >nul
+            git fetch origin %BRANCH% --quiet 2>nul
+            git pull --ff-only origin %BRANCH% --quiet 2>nul
+            popd >nul
+        )
+    )
 )
 echo.
 echo [2/4] Creating virtual environment...
@@ -99,7 +110,12 @@ echo [3/4] Upgrading pip...
 "%PY%" -m pip install --upgrade pip wheel setuptools || exit /b 1
 echo.
 echo [4/4] Installing ResonanceForge (+ GUI extras)...
-"%PY%" -m pip install -e "%PROJECT_DIR%[gui]" || exit /b 1
+"%PY%" -m pip install --no-cache-dir -e "%PROJECT_DIR%[gui]" || (
+    echo.
+    echo Install failed. If this is the numpy/scipy build error, your local
+    echo working tree may be stale. Run option 5 ^(Update^) once, then retry Setup.
+    exit /b 1
+)
 echo.
 echo Setup complete. Use option 3 to launch the GUI.
 pause
