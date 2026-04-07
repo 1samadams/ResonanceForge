@@ -31,6 +31,12 @@ try:
 except Exception:
     _HAS_DND = False
 
+try:
+    import sv_ttk  # type: ignore
+    _HAS_SV_TTK = True
+except Exception:
+    _HAS_SV_TTK = False
+
 from .config import PipelineConfig
 from .pipeline import Pipeline, ProcessReport
 
@@ -50,8 +56,8 @@ class ResonanceForgeGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("ResonanceForge — Mastering Pipeline")
-        root.geometry("920x640")
-        root.minsize(780, 520)
+        root.geometry("1040x740")
+        root.minsize(880, 600)
 
         self.queue: "queue.Queue[_Msg]" = queue.Queue()
         self.worker: Optional[threading.Thread] = None
@@ -84,26 +90,45 @@ class ResonanceForgeGUI:
 
     # ---------- UI ----------
     def _build_ui(self) -> None:
+        # Modern Sun Valley theme if available; otherwise use 'clam' as a
+        # cleaner fallback than tk's default.
+        if _HAS_SV_TTK:
+            sv_ttk.set_theme("light")
         style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("Treeview", rowheight=24)
+        if not _HAS_SV_TTK:
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+        style.configure("Treeview", rowheight=28)
+        style.configure("Heading.TLabel", font=("Segoe UI", 14, "bold"))
+        style.configure("Subhead.TLabel", font=("Segoe UI", 10), foreground="#888")
+        style.configure("Card.TLabelframe", padding=14)
+        style.configure("Card.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
 
-        # Top: file list
-        top = ttk.Frame(self.root, padding=(10, 10, 10, 5))
+        # ---- App title bar (modern brand strip) ----
+        brand = ttk.Frame(self.root, padding=(16, 14, 16, 6))
+        brand.pack(fill=tk.X)
+        ttk.Label(brand, text="ResonanceForge", style="Heading.TLabel").pack(side=tk.LEFT)
+        ttk.Label(
+            brand, text="  ·  Mastering pipeline", style="Subhead.TLabel",
+        ).pack(side=tk.LEFT, padx=(2, 0))
+
+        # Top: file list card
+        top = ttk.Frame(self.root, padding=(16, 4, 16, 4))
         top.pack(fill=tk.BOTH, expand=True)
 
         header = ttk.Frame(top)
-        header.pack(fill=tk.X)
-        ttk.Label(header, text="Files", font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
-        ttk.Button(header, text="Add Files…", command=self._add_files).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(header, text="Add Folder…", command=self._add_folder).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(header, text="Remove", command=self._remove_selected).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(header, text="Clear", command=self._clear).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(header, text="Load Preset…", command=self._load_preset).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(header, text="Save Preset…", command=self._save_preset).pack(side=tk.RIGHT, padx=2)
+        header.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(header, text="Files", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+        ttk.Button(header, text="Add Files", command=self._add_files).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(header, text="Add Folder", command=self._add_folder).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(header, text="Remove", command=self._remove_selected).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(header, text="Clear", command=self._clear).pack(side=tk.RIGHT, padx=3)
+        ttk.Separator(header, orient=tk.VERTICAL).pack(side=tk.RIGHT, padx=8, fill=tk.Y)
+        ttk.Button(header, text="Load Preset", command=self._load_preset).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(header, text="Save Preset", command=self._save_preset).pack(side=tk.RIGHT, padx=3)
 
         cols = ("file", "status", "lufs_in", "lufs_out", "tp")
         self.tree = ttk.Treeview(top, columns=cols, show="headings", height=10)
@@ -124,8 +149,8 @@ class ResonanceForgeGUI:
         self.tree.tag_configure("done", foreground="#148a3d")
         self.tree.tag_configure("error", foreground="#b00020")
 
-        dnd_hint = "Drag & drop audio files here" if _HAS_DND else "(install `tkinterdnd2` for drag-and-drop)"
-        ttk.Label(top, text=dnd_hint, foreground="#888").pack(anchor=tk.W, pady=(4, 0))
+        dnd_hint = "↳ Drag & drop audio files anywhere on the list" if _HAS_DND else "(install tkinterdnd2 for drag-and-drop)"
+        ttk.Label(top, text=dnd_hint, style="Subhead.TLabel").pack(anchor=tk.W, pady=(6, 0))
 
         if _HAS_DND:
             self.tree.drop_target_register(DND_FILES)  # type: ignore[attr-defined]
@@ -133,9 +158,10 @@ class ResonanceForgeGUI:
         self.tree.bind("<Delete>", lambda _e: self._remove_selected())
         self.tree.bind("<BackSpace>", lambda _e: self._remove_selected())
 
-        # Middle: settings
-        settings = ttk.LabelFrame(self.root, text="Mastering settings", padding=10)
-        settings.pack(fill=tk.X, padx=10, pady=(6, 4))
+        # Middle: settings card
+        settings = ttk.LabelFrame(self.root, text="Mastering settings",
+                                  style="Card.TLabelframe")
+        settings.pack(fill=tk.X, padx=16, pady=(8, 6))
 
         r = 0
         ttk.Label(settings, text="Quick preset:").grid(row=r, column=0, sticky=tk.W)
@@ -185,23 +211,34 @@ class ResonanceForgeGUI:
         settings.columnconfigure(1, weight=1)
 
         # Progress + actions
-        actions = ttk.Frame(self.root, padding=(10, 4))
+        actions = ttk.Frame(self.root, padding=(16, 6, 16, 6))
         actions.pack(fill=tk.X)
         self.progress = ttk.Progressbar(actions, mode="determinate")
-        self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12), ipady=2)
         self.cancel_btn = ttk.Button(actions, text="Cancel", command=self._cancel, state=tk.DISABLED)
-        self.cancel_btn.pack(side=tk.RIGHT, padx=(0, 4))
-        self.run_btn = ttk.Button(actions, text="Start Processing", command=self._start)
+        self.cancel_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        self.run_btn = ttk.Button(
+            actions, text="Start Processing", command=self._start,
+            style="Accent.TButton",
+        )
         self.run_btn.pack(side=tk.RIGHT)
 
-        # Log
-        logf = ttk.LabelFrame(self.root, text="Log", padding=6)
-        logf.pack(fill=tk.BOTH, expand=False, padx=10, pady=(4, 10))
-        self.log = tk.Text(logf, height=8, wrap=tk.WORD, state=tk.DISABLED, background="#111", foreground="#ddd", insertbackground="#ddd")
+        # Log card
+        logf = ttk.LabelFrame(self.root, text="Log", style="Card.TLabelframe")
+        logf.pack(fill=tk.BOTH, expand=False, padx=16, pady=(4, 12))
+        self.log = tk.Text(
+            logf, height=8, wrap=tk.WORD, state=tk.DISABLED,
+            background="#0f1115", foreground="#d6deeb",
+            insertbackground="#d6deeb", borderwidth=0, relief=tk.FLAT,
+            font=("Cascadia Mono", 9) if _HAS_SV_TTK else ("Consolas", 9),
+        )
         self.log.pack(fill=tk.BOTH, expand=True)
 
-        self.status_var = tk.StringVar(value="Ready.")
-        ttk.Label(self.root, textvariable=self.status_var, anchor=tk.W, relief=tk.SUNKEN).pack(fill=tk.X, side=tk.BOTTOM)
+        self.status_var = tk.StringVar(value="Ready")
+        status = ttk.Frame(self.root, padding=(16, 6, 16, 8))
+        status.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.BOTTOM, before=status)
+        ttk.Label(status, textvariable=self.status_var, style="Subhead.TLabel").pack(side=tk.LEFT)
 
     # ---------- file management ----------
     def _add_files(self) -> None:
@@ -435,29 +472,15 @@ class ResonanceForgeGUI:
         return cfg
 
     def _toggle_theme(self) -> None:
+        if _HAS_SV_TTK:
+            sv_ttk.set_theme("dark" if self.dark_theme.get() else "light")
+            return
+        # Fallback for installations without sv_ttk: switch ttk theme.
         style = ttk.Style()
-        if self.dark_theme.get():
-            try:
-                style.theme_use("clam")
-            except tk.TclError:
-                pass
-            self.root.configure(bg="#1e1e1e")
-            style.configure(".", background="#1e1e1e", foreground="#e0e0e0")
-            style.configure("TLabel", background="#1e1e1e", foreground="#e0e0e0")
-            style.configure("TFrame", background="#1e1e1e")
-            style.configure("TLabelframe", background="#1e1e1e", foreground="#e0e0e0")
-            style.configure("TLabelframe.Label", background="#1e1e1e", foreground="#e0e0e0")
-            style.configure("TCheckbutton", background="#1e1e1e", foreground="#e0e0e0")
-            style.configure("Treeview", background="#2a2a2a", fieldbackground="#2a2a2a", foreground="#e0e0e0")
-        else:
-            try:
-                style.theme_use("clam")
-            except tk.TclError:
-                pass
-            self.root.configure(bg="SystemButtonFace")
-            for element in ("TLabel", "TFrame", "TLabelframe", "TLabelframe.Label", "TCheckbutton"):
-                style.configure(element, background="", foreground="")
-            style.configure("Treeview", background="white", fieldbackground="white", foreground="black")
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
 
     def _start(self) -> None:
         if self.worker and self.worker.is_alive():
