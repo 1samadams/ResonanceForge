@@ -16,7 +16,12 @@ from .modules import (
     build_limiter,
     apply_stereo,
     apply_saturation,
+    apply_quality,
     ensure_stereo,
+    resample_if_needed,
+    oversampled_true_peak_db,
+    stereo_correlation,
+    loudness_range_db,
 )
 
 
@@ -34,8 +39,10 @@ class ProcessReport:
     lufs_in: float
     lufs_out: float
     sample_peak_db: float
-    true_peak_out_db: float   # reported from pyloudnorm true-peak meter
+    true_peak_out_db: float    # 4x oversampled inter-sample peak
     clipped: bool
+    lufs_range: float = 0.0    # LRA approximation (95th - 10th percentile)
+    stereo_correlation: float = 1.0
     config_snapshot: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +122,9 @@ class Pipeline:
         meter = pyln.Meter(sr)
         lufs_in = self._safe_lufs(meter, audio)
         target = self.config.loudness.target_lufs
+        # Sentinel used by album mode to bypass per-track normalization.
+        if target <= -199.0:
+            return audio, lufs_in, lufs_in
         if lufs_in <= -70.0:
             # Effectively silent; don't apply huge gain.
             return audio, lufs_in, lufs_in
@@ -138,6 +148,7 @@ class Pipeline:
     def process(
         self, input_path: str | Path, output_path: str | Path,
         dry_run: bool = False,
+        extra_gain_db: float = 0.0,
     ) -> ProcessReport:
         in_path = Path(input_path)
         out_path = Path(output_path)
@@ -149,6 +160,14 @@ class Pipeline:
         # Everything downstream assumes stereo.
         audio = ensure_stereo(audio)
         channels = int(audio.shape[0])
+
+        # Optional cleanup / repair stages up-front (trim, notch, de-ess, tail-fade).
+        audio = apply_quality(audio, self.config.quality, sr)
+
+        # Manual trim (per-track gain) applied early so EQ/limiter see the level.
+        g_db = float(self.config.gain_offset_db) + float(extra_gain_db)
+        if g_db != 0.0:
+            audio = audio * (10.0 ** (g_db / 20.0))
 
         # EQ
         eq = build_eq(self.config.eq)
@@ -186,21 +205,20 @@ class Pipeline:
         # Measurements for the report.
         sample_peak = float(np.max(np.abs(audio))) if audio.size else 0.0
         sample_peak_db = 20.0 * np.log10(max(sample_peak, 1e-12))
-        try:
-            tp_meter = pyln.Meter(sr)
-            true_peak_db = float(
-                20.0 * np.log10(max(tp_meter.integrated_loudness(audio.T), 1e-12))
-            )
-        except Exception:
-            true_peak_db = sample_peak_db
-        # pyloudnorm doesn't ship a true-peak meter as of 0.1.x; fall back to
-        # sample peak for the TP field but keep it distinct in the schema so
-        # we can upgrade later without changing the report contract.
-        true_peak_db = sample_peak_db
-        clipped = sample_peak >= 0.9999
+        # Real 4× oversampled inter-sample peak.
+        true_peak_db = oversampled_true_peak_db(audio, factor=4)
+        lra = loudness_range_db(audio, sr)
+        corr = stereo_correlation(audio)
+        clipped = sample_peak >= 0.9999 or true_peak_db >= ceiling_db + 0.01
 
         # Fades
         audio = self._apply_fades(audio, sr)
+
+        # Delivery sample-rate conversion (last, after all DSP, before dither).
+        target_sr = self.config.quality.target_sample_rate
+        out_sr = int(target_sr) if target_sr else sr
+        if out_sr != sr:
+            audio = resample_if_needed(audio, sr, out_sr)
 
         # Dither (TPDF) before PCM quantization.
         bd = self.config.output_bit_depth
@@ -214,20 +232,92 @@ class Pipeline:
             np.clip(audio, -1.0, 1.0, out=audio)
 
         if not dry_run:
-            self._write(out_path, audio, sr)
+            self._write(out_path, audio, out_sr)
+            if self.config.preserve_metadata:
+                _try_copy_metadata(in_path, out_path)
 
         return ProcessReport(
             input_path=str(in_path),
             output_path=str(out_path),
-            sample_rate=sr,
+            sample_rate=out_sr,
             channels=channels,
             lufs_in=lufs_in,
             lufs_out=lufs_out,
             sample_peak_db=sample_peak_db,
             true_peak_out_db=true_peak_db,
             clipped=clipped,
+            lufs_range=lra,
+            stereo_correlation=corr,
             config_snapshot=self.config.to_dict(),
         )
+
+    # ---- album (two-pass) ----
+    def process_album(
+        self,
+        files: list[str | Path],
+        output_dir: str | Path,
+        ext: str = "wav",
+    ) -> list[ProcessReport]:
+        """Two-pass album mastering: measure loudness of every track first,
+        then apply a per-track gain offset so the loudest track hits the
+        configured target and the rest preserve their relative dynamics.
+
+        This keeps inter-track loudness consistent (R128 album mode style).
+        """
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pass 1: integrated loudness of each input (no processing).
+        loudness = []
+        for f in files:
+            audio, sr = self._read(Path(f))
+            audio = self._sanitize(ensure_stereo(audio))
+            meter = pyln.Meter(sr)
+            loudness.append(self._safe_lufs(meter, audio))
+
+        finite = [v for v in loudness if v > -70.0]
+        if not finite:
+            anchor = self.config.loudness.target_lufs
+        else:
+            anchor = max(finite)  # align to the loudest track
+
+        target = self.config.loudness.target_lufs
+        base_gain = target - anchor
+
+        reports = []
+        for f, lufs in zip(files, loudness):
+            src = Path(f)
+            dest = out_dir / (src.stem + "_mastered." + ext)
+            extra = base_gain + (lufs - anchor) if lufs > -70.0 else 0.0
+            # Disable per-track normalization inside process() and drive
+            # loudness purely via extra_gain_db so the album balance holds.
+            prior = self.config.loudness.target_lufs
+            self.config.loudness.target_lufs = -200.0  # sentinel: skip norm
+            try:
+                rep = self.process(src, dest, extra_gain_db=extra)
+            finally:
+                self.config.loudness.target_lufs = prior
+            reports.append(rep)
+        return reports
+
+
+def _try_copy_metadata(src: Path, dst: Path) -> None:
+    """Best-effort tag passthrough via mutagen (if installed)."""
+    try:
+        from mutagen import File as MFile  # type: ignore
+    except Exception:
+        return
+    try:
+        s = MFile(str(src))
+        d = MFile(str(dst))
+        if s is None or d is None or not getattr(s, "tags", None):
+            return
+        # Use raw tag dict copy where formats match.
+        if type(s).__name__ == type(d).__name__ and s.tags is not None:
+            d.tags = s.tags
+            d.save()
+    except Exception:
+        pass
 
 
 def process_file(

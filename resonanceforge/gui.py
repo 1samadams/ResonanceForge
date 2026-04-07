@@ -66,6 +66,16 @@ class ResonanceForgeGUI:
         self.sat_mode = tk.StringVar(value="tube")
         self.sat_drive = tk.DoubleVar(value=6.0)
         self.sat_mix = tk.DoubleVar(value=0.25)
+        # quality / delivery
+        self.trim_silence = tk.BooleanVar(value=False)
+        self.auto_fade_tail = tk.BooleanVar(value=False)
+        self.hum_notch = tk.StringVar(value="off")  # off | 50 | 60
+        self.deesser = tk.BooleanVar(value=False)
+        self.target_sr = tk.StringVar(value="keep")  # keep | 44100 | 48000 | 96000
+        self.album_mode = tk.BooleanVar(value=False)
+        self.preserve_metadata = tk.BooleanVar(value=True)
+        self.dark_theme = tk.BooleanVar(value=False)
+        self.recent_files: list[str] = []
 
         self._build_ui()
         self._load_settings()
@@ -160,6 +170,18 @@ class ResonanceForgeGUI:
         ttk.Spinbox(settings, from_=0.0, to=24.0, increment=0.5, textvariable=self.sat_drive, width=8).grid(row=r, column=3, sticky=tk.W)
         ttk.Label(settings, text="Mix:").grid(row=r, column=4, sticky=tk.E)
         ttk.Spinbox(settings, from_=0.0, to=1.0, increment=0.05, textvariable=self.sat_mix, width=8).grid(row=r, column=5, sticky=tk.W)
+        r += 1
+        ttk.Checkbutton(settings, text="Trim silence", variable=self.trim_silence).grid(row=r, column=0, sticky=tk.W, pady=4)
+        ttk.Checkbutton(settings, text="Auto-fade tail", variable=self.auto_fade_tail).grid(row=r, column=1, sticky=tk.W)
+        ttk.Checkbutton(settings, text="De-esser", variable=self.deesser).grid(row=r, column=2, sticky=tk.W)
+        ttk.Label(settings, text="Hum notch:").grid(row=r, column=3, sticky=tk.E)
+        ttk.Combobox(settings, textvariable=self.hum_notch, values=["off", "50", "60"], width=6, state="readonly").grid(row=r, column=4, sticky=tk.W)
+        ttk.Label(settings, text="SR:").grid(row=r, column=5, sticky=tk.E)
+        ttk.Combobox(settings, textvariable=self.target_sr, values=["keep", "44100", "48000", "88200", "96000"], width=8, state="readonly").grid(row=r, column=6, sticky=tk.W)
+        r += 1
+        ttk.Checkbutton(settings, text="Album mode (consistent loudness across batch)", variable=self.album_mode).grid(row=r, column=0, columnspan=3, sticky=tk.W, pady=4)
+        ttk.Checkbutton(settings, text="Preserve metadata", variable=self.preserve_metadata).grid(row=r, column=3, columnspan=2, sticky=tk.W)
+        ttk.Checkbutton(settings, text="Dark theme", variable=self.dark_theme, command=self._toggle_theme).grid(row=r, column=5, columnspan=2, sticky=tk.W)
         settings.columnconfigure(1, weight=1)
 
         # Progress + actions
@@ -212,6 +234,12 @@ class ResonanceForgeGUI:
         self.tree.insert("", tk.END, iid=str(len(self.files) - 1),
                          values=(str(path), "Pending", "—", "—", "—"),
                          tags=("pending",))
+        # Track in recent files (most-recent first, dedup, cap to 12).
+        s = str(path)
+        if s in self.recent_files:
+            self.recent_files.remove(s)
+        self.recent_files.insert(0, s)
+        self.recent_files = self.recent_files[:12]
 
     def _clear(self) -> None:
         if self.worker and self.worker.is_alive():
@@ -329,6 +357,13 @@ class ResonanceForgeGUI:
         self.sat_mode.set(cfg.saturation.mode)
         self.sat_drive.set(cfg.saturation.drive_db)
         self.sat_mix.set(cfg.saturation.mix)
+        self.trim_silence.set(cfg.quality.trim_silence)
+        self.auto_fade_tail.set(cfg.quality.auto_fade_tail)
+        self.hum_notch.set(str(cfg.quality.hum_notch_hz) if cfg.quality.hum_notch_hz else "off")
+        self.deesser.set(cfg.quality.deesser_enabled)
+        self.target_sr.set(str(cfg.quality.target_sample_rate) if cfg.quality.target_sample_rate else "keep")
+        self.album_mode.set(cfg.album_mode)
+        self.preserve_metadata.set(cfg.preserve_metadata)
 
     # ---------- settings persistence ----------
     def _gather_settings(self) -> dict:
@@ -336,6 +371,8 @@ class ResonanceForgeGUI:
             "output_dir": self.output_dir.get(),
             "config": self._build_config().to_dict(),
             "geometry": self.root.winfo_geometry(),
+            "recent_files": self.recent_files,
+            "dark_theme": bool(self.dark_theme.get()),
         }
 
     def _load_settings(self) -> None:
@@ -357,6 +394,11 @@ class ResonanceForgeGUI:
                 self.root.geometry(data["geometry"])
             except tk.TclError:
                 pass
+        if "recent_files" in data and isinstance(data["recent_files"], list):
+            self.recent_files = list(data["recent_files"])[:12]
+        if data.get("dark_theme"):
+            self.dark_theme.set(True)
+            self._toggle_theme()
 
     def _save_settings(self) -> None:
         try:
@@ -380,7 +422,42 @@ class ResonanceForgeGUI:
         cfg.saturation.mode = self.sat_mode.get()  # type: ignore[assignment]
         cfg.saturation.drive_db = float(self.sat_drive.get())
         cfg.saturation.mix = float(self.sat_mix.get())
+        # Quality
+        cfg.quality.trim_silence = bool(self.trim_silence.get())
+        cfg.quality.auto_fade_tail = bool(self.auto_fade_tail.get())
+        notch = self.hum_notch.get()
+        cfg.quality.hum_notch_hz = int(notch) if notch in ("50", "60") else None
+        cfg.quality.deesser_enabled = bool(self.deesser.get())
+        sr = self.target_sr.get()
+        cfg.quality.target_sample_rate = int(sr) if sr != "keep" else None
+        cfg.album_mode = bool(self.album_mode.get())
+        cfg.preserve_metadata = bool(self.preserve_metadata.get())
         return cfg
+
+    def _toggle_theme(self) -> None:
+        style = ttk.Style()
+        if self.dark_theme.get():
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+            self.root.configure(bg="#1e1e1e")
+            style.configure(".", background="#1e1e1e", foreground="#e0e0e0")
+            style.configure("TLabel", background="#1e1e1e", foreground="#e0e0e0")
+            style.configure("TFrame", background="#1e1e1e")
+            style.configure("TLabelframe", background="#1e1e1e", foreground="#e0e0e0")
+            style.configure("TLabelframe.Label", background="#1e1e1e", foreground="#e0e0e0")
+            style.configure("TCheckbutton", background="#1e1e1e", foreground="#e0e0e0")
+            style.configure("Treeview", background="#2a2a2a", fieldbackground="#2a2a2a", foreground="#e0e0e0")
+        else:
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+            self.root.configure(bg="SystemButtonFace")
+            for element in ("TLabel", "TFrame", "TLabelframe", "TLabelframe.Label", "TCheckbutton"):
+                style.configure(element, background="", foreground="")
+            style.configure("Treeview", background="white", fieldbackground="white", foreground="black")
 
     def _start(self) -> None:
         if self.worker and self.worker.is_alive():
@@ -412,6 +489,19 @@ class ResonanceForgeGUI:
     def _run_batch(self, files: list[Path], out_dir: Path, cfg: PipelineConfig) -> None:
         pipe = Pipeline(cfg)
         ext = "." + cfg.output_format
+        # Album mode: two-pass, handled in Pipeline.process_album.
+        if cfg.album_mode:
+            self.queue.put(_Msg("log", text="Album mode: measuring all tracks..."))
+            try:
+                reports = pipe.process_album(files, out_dir, ext=cfg.output_format)
+                for idx, rep in enumerate(reports):
+                    self.queue.put(_Msg("done", index=idx, report=rep))
+                    self.queue.put(_Msg("progress", index=idx + 1))
+            except Exception as e:
+                self.queue.put(_Msg("log", text=f"Album mode error: {e}"))
+            self.queue.put(_Msg("log", text="Batch complete."))
+            self.queue.put(_Msg("status", index=-1, text="__finished__"))
+            return
         for idx, src in enumerate(files):
             if self.cancel_event.is_set():
                 self.queue.put(_Msg("log", text="Batch cancelled."))
@@ -455,6 +545,10 @@ class ResonanceForgeGUI:
                 self.run_btn.state(["!disabled"])
                 self.cancel_btn.state(["disabled"])
                 self.status_var.set("Cancelled." if self.cancel_event.is_set() else "Done.")
+                try:
+                    self.root.bell()
+                except Exception:
+                    pass
                 return
             iid = str(msg.index)
             if self.tree.exists(iid):

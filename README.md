@@ -72,6 +72,14 @@ Flags:
 | `--no-dither` | off | Disable TPDF dither on PCM export |
 | `--dry-run` | off | Measure + report without writing files |
 | `--report` | – | Append one JSON `ProcessReport` per line |
+| `--sample-rate` | input | Delivery sample rate (e.g. `44100`, `48000`) |
+| `--trim` | off | Trim leading/trailing silence |
+| `--auto-fade-tail` | off | Detect decay tail and fade to silence |
+| `--notch` | – | `50` or `60` Hz hum notch (with harmonics) |
+| `--deesser` | off | Static narrow-band de-ess dip |
+| `--gain` | 0.0 | Per-track manual gain offset (dB) |
+| `--album` | off | Two-pass album mode: consistent loudness across batch |
+| `--no-metadata` | off | Don't carry tags from input to output |
 
 ### Presets
 
