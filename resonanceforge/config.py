@@ -13,7 +13,9 @@ class EQConfig:
     lowpass_hz: float = 18000.0
     # Tilt EQ: symmetric low-cut / high-boost around `tilt_pivot_hz`.
     tilt_pivot_hz: float = 1000.0
-    tilt_db: float = 0.5
+    # Neutral by default — non-zero stacks with the saturation wet-path
+    # low shelf and audibly thins the master. Set in a preset for taste.
+    tilt_db: float = 0.0
 
 
 @dataclass
@@ -29,7 +31,8 @@ class DynamicsConfig:
     # Crossovers for a 3-band split (low/mid/high). Linkwitz–Riley 4th-order.
     low_mid_crossover_hz: float = 200.0
     mid_high_crossover_hz: float = 2500.0
-    low_band: MultibandBand = field(default_factory=lambda: MultibandBand(-20.0, 2.0, 30.0, 200.0))
+    # Gentler low-band so the sub doesn't get pumped under the limiter.
+    low_band: MultibandBand = field(default_factory=lambda: MultibandBand(-16.0, 1.6, 40.0, 220.0))
     mid_band: MultibandBand = field(default_factory=lambda: MultibandBand(-18.0, 2.0, 15.0, 150.0))
     high_band: MultibandBand = field(default_factory=lambda: MultibandBand(-20.0, 1.8, 5.0, 100.0))
     limiter_threshold_db: float = -1.0
@@ -38,8 +41,10 @@ class DynamicsConfig:
 
 @dataclass
 class StereoConfig:
-    width: float = 1.10              # +10% Side by default
-    bass_mono_hz: float = 120.0
+    # Modest width so the phantom center stays forward (10% recessed it).
+    width: float = 1.05
+    # Mono only true sub; leave musical bass with natural stereo spread.
+    bass_mono_hz: float = 90.0
 
 
 @dataclass

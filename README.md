@@ -47,7 +47,7 @@ Windows: `resonanceforge.bat setup` does the same.
 Process a single file:
 
 ```bash
-resonanceforge input.wav output.wav --lufs -14 --tp -1 --width 1.10
+resonanceforge input.wav output.wav --lufs -14 --tp -1 --width 1.05
 ```
 
 Batch-process a directory:
@@ -62,7 +62,7 @@ Flags:
 | --- | --- | --- |
 | `--lufs` | -14 | Target integrated LUFS |
 | `--tp` | -1.0 | True-peak ceiling in dBTP |
-| `--width` | 1.0 | M/S Side gain (1.10 = +10%) |
+| `--width` | 1.05 | M/S Side gain (1.05 = +5%) |
 | `--sat-mode` | tube | `tube`, `tape`, or `exciter` |
 | `--sat-drive` | 6.0 | Saturation drive (dB) |
 | `--sat-mix` | 0.25 | Parallel dry/wet mix (0..1) |
@@ -109,7 +109,7 @@ from resonanceforge import Pipeline, PipelineConfig
 cfg = PipelineConfig()
 cfg.loudness.target_lufs = -14.0
 cfg.loudness.true_peak_db = -1.0
-cfg.stereo.width = 1.10
+cfg.stereo.width = 1.05
 cfg.saturation.mode = "tube"
 
 report = Pipeline(cfg).process("mix.wav", "master.wav")
