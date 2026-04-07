@@ -12,7 +12,8 @@ import pyloudnorm as pyln
 from .config import PipelineConfig
 from .modules import (
     build_eq,
-    build_dynamics,
+    apply_multiband,
+    build_limiter,
     apply_stereo,
     apply_saturation,
 )
@@ -87,9 +88,10 @@ class Pipeline:
         # Stereo shaping
         audio = apply_stereo(audio, self.config.stereo, sr)
 
-        # Dynamics (comp + limiter)
-        dyn = build_dynamics(self.config.dynamics)
-        audio = dyn(audio.T.astype(np.float32), sr).T
+        # Dynamics: 3-band multiband compression, then brickwall limiter
+        audio = apply_multiband(audio, self.config.dynamics, sr)
+        limiter = build_limiter(self.config.dynamics)
+        audio = limiter(audio.T.astype(np.float32), sr).T
 
         # Loudness normalization
         audio, lufs_in, lufs_out = self._normalize_loudness(audio, sr)

@@ -8,25 +8,37 @@ from typing import Literal, Optional
 @dataclass
 class EQConfig:
     highpass_hz: float = 30.0
-    low_shelf_hz: float = 120.0
-    low_shelf_db: float = 0.0
-    high_shelf_hz: float = 8000.0
-    high_shelf_db: float = 0.0
+    lowpass_hz: float = 18000.0
+    # Tilt EQ: pivots around `tilt_pivot_hz`. Positive dB tilts brighter
+    # (boost highs / cut lows by the same amount), negative tilts darker.
+    tilt_pivot_hz: float = 1000.0
+    tilt_db: float = 0.5
+
+
+@dataclass
+class MultibandBand:
+    threshold_db: float
+    ratio: float
+    attack_ms: float
+    release_ms: float
 
 
 @dataclass
 class DynamicsConfig:
-    comp_threshold_db: float = -18.0
-    comp_ratio: float = 2.0
-    comp_attack_ms: float = 15.0
-    comp_release_ms: float = 120.0
+    # Crossover frequencies for a 3-band split (low/mid/high).
+    low_mid_crossover_hz: float = 200.0
+    mid_high_crossover_hz: float = 2500.0
+    low_band: MultibandBand = field(default_factory=lambda: MultibandBand(-20.0, 2.0, 30.0, 200.0))
+    mid_band: MultibandBand = field(default_factory=lambda: MultibandBand(-18.0, 2.0, 15.0, 150.0))
+    high_band: MultibandBand = field(default_factory=lambda: MultibandBand(-20.0, 1.8, 5.0, 100.0))
     limiter_threshold_db: float = -1.0
     limiter_release_ms: float = 100.0
 
 
 @dataclass
 class StereoConfig:
-    width: float = 1.0            # 1.0 = unchanged, <1 narrower, >1 wider
+    # +10% side gain for width (1.10). <1 narrower, >1 wider.
+    width: float = 1.10
     bass_mono_hz: float = 120.0   # mono-ize content below this frequency
 
 

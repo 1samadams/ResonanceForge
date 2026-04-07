@@ -5,6 +5,7 @@ import numpy as np
 from pedalboard import (
     Pedalboard,
     HighpassFilter,
+    LowpassFilter,
     LowShelfFilter,
     HighShelfFilter,
     Compressor,
@@ -22,21 +23,64 @@ from .config import (
 
 
 def build_eq(cfg: EQConfig) -> Pedalboard:
+    """Utility HPF + tilt EQ (symmetric low-cut / high-boost around pivot)."""
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=cfg.highpass_hz),
-        LowShelfFilter(cutoff_frequency_hz=cfg.low_shelf_hz, gain_db=cfg.low_shelf_db),
-        HighShelfFilter(cutoff_frequency_hz=cfg.high_shelf_hz, gain_db=cfg.high_shelf_db),
+        LowpassFilter(cutoff_frequency_hz=cfg.lowpass_hz),
+        LowShelfFilter(cutoff_frequency_hz=cfg.tilt_pivot_hz, gain_db=-cfg.tilt_db),
+        HighShelfFilter(cutoff_frequency_hz=cfg.tilt_pivot_hz, gain_db=+cfg.tilt_db),
     ])
 
 
-def build_dynamics(cfg: DynamicsConfig) -> Pedalboard:
-    return Pedalboard([
+def apply_multiband(audio: np.ndarray, cfg: DynamicsConfig, sample_rate: float) -> np.ndarray:
+    """3-band multiband compressor using pedalboard filters + Compressor.
+
+    Splits with LP/HP pairs at the two crossovers, compresses each band
+    independently, then sums. Not linear-phase, but adequate for a
+    transparent glue-style master bus.
+    """
+    work = audio.T.astype(np.float32, copy=False)
+    f_lo = float(cfg.low_mid_crossover_hz)
+    f_hi = float(cfg.mid_high_crossover_hz)
+
+    low_chain = Pedalboard([
+        LowpassFilter(cutoff_frequency_hz=f_lo),
         Compressor(
-            threshold_db=cfg.comp_threshold_db,
-            ratio=cfg.comp_ratio,
-            attack_ms=cfg.comp_attack_ms,
-            release_ms=cfg.comp_release_ms,
+            threshold_db=cfg.low_band.threshold_db,
+            ratio=cfg.low_band.ratio,
+            attack_ms=cfg.low_band.attack_ms,
+            release_ms=cfg.low_band.release_ms,
         ),
+    ])
+    mid_chain = Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=f_lo),
+        LowpassFilter(cutoff_frequency_hz=f_hi),
+        Compressor(
+            threshold_db=cfg.mid_band.threshold_db,
+            ratio=cfg.mid_band.ratio,
+            attack_ms=cfg.mid_band.attack_ms,
+            release_ms=cfg.mid_band.release_ms,
+        ),
+    ])
+    high_chain = Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=f_hi),
+        Compressor(
+            threshold_db=cfg.high_band.threshold_db,
+            ratio=cfg.high_band.ratio,
+            attack_ms=cfg.high_band.attack_ms,
+            release_ms=cfg.high_band.release_ms,
+        ),
+    ])
+
+    low = low_chain(work, sample_rate)
+    mid = mid_chain(work, sample_rate)
+    high = high_chain(work, sample_rate)
+    summed = low + mid + high
+    return summed.T.astype(audio.dtype, copy=False)
+
+
+def build_limiter(cfg: DynamicsConfig) -> Pedalboard:
+    return Pedalboard([
         Limiter(
             threshold_db=cfg.limiter_threshold_db,
             release_ms=cfg.limiter_release_ms,
