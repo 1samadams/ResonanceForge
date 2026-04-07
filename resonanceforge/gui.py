@@ -128,6 +128,21 @@ class ResonanceForgeGUI:
         settings.pack(fill=tk.X, padx=10, pady=(6, 4))
 
         r = 0
+        ttk.Label(settings, text="Quick preset:").grid(row=r, column=0, sticky=tk.W)
+        self.quick_preset = tk.StringVar(value="Default (Streaming -14)")
+        quick_values = [
+            "Default (Streaming -14)",
+            "Club -9",
+            "Vinyl",
+            "Custom",
+        ]
+        qp = ttk.Combobox(
+            settings, textvariable=self.quick_preset, values=quick_values,
+            state="readonly", width=24,
+        )
+        qp.grid(row=r, column=1, columnspan=2, sticky=tk.W, padx=6)
+        qp.bind("<<ComboboxSelected>>", lambda _e: self._apply_quick_preset())
+        r += 1
         ttk.Label(settings, text="Output folder:").grid(row=r, column=0, sticky=tk.W)
         ttk.Entry(settings, textvariable=self.output_dir, width=60).grid(row=r, column=1, columnspan=3, sticky=tk.EW, padx=6)
         ttk.Button(settings, text="Browse…", command=self._pick_output).grid(row=r, column=4, sticky=tk.E)
@@ -258,6 +273,23 @@ class ResonanceForgeGUI:
             self.cancel_event.set()
             self._log("Cancel requested — will stop after current file.")
             self.status_var.set("Cancelling…")
+
+    def _apply_quick_preset(self) -> None:
+        """Map the Quick Preset dropdown to a shipped preset file."""
+        mapping = {
+            "Default (Streaming -14)": "streaming_-14.json",
+            "Club -9": "club_-9.json",
+            "Vinyl": "vinyl.json",
+        }
+        name = self.quick_preset.get()
+        if name == "Custom":
+            return
+        preset_file = PRESETS_DIR / mapping.get(name, "streaming_-14.json")
+        try:
+            self._apply_config(PipelineConfig.load(preset_file))
+            self._log(f"Quick preset: {name}")
+        except Exception as e:
+            self._log(f"Preset load failed: {e}")
 
     def _load_preset(self) -> None:
         initial = str(PRESETS_DIR) if PRESETS_DIR.exists() else str(Path.cwd())

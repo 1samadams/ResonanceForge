@@ -49,6 +49,8 @@ if /I "%~1"=="cli"       goto :run_cli
 if /I "%~1"=="update"    goto :update
 if /I "%~1"=="doctor"    goto :doctor
 if /I "%~1"=="uninstall" goto :uninstall
+REM Drag-and-drop / one-shot master: any .wav/.flac/.mp3 path as arg1
+if exist "%~1" goto :one_shot
 echo Unknown command: %~1
 echo Usage: resonanceforge.bat [setup^|install^|gui^|cli^|update^|doctor^|uninstall]
 exit /b 1
@@ -160,6 +162,17 @@ echo --- Git ---
 where git 2>nul && git -C "%PROJECT_DIR%" rev-parse --abbrev-ref HEAD 2>nul
 pause
 if "%~1"=="" goto :menu
+goto :eof
+
+REM ------------------------------------------------------------
+:one_shot
+if not exist "%PY%" ( echo [ERROR] venv missing. Run Setup first. & exit /b 1 )
+set "IN=%~1"
+set "OUTDIR=%~dp1mastered"
+if not exist "%OUTDIR%" mkdir "%OUTDIR%"
+echo Mastering "%IN%" with default preset...
+"%PY%" -m resonanceforge.cli "%IN%" "%OUTDIR%" --preset "%PROJECT_DIR%resonanceforge\presets\streaming_-14.json"
+pause
 goto :eof
 
 REM ------------------------------------------------------------
