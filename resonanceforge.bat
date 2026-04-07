@@ -168,12 +168,29 @@ if /I not "%~2"=="__from_temp" (
 REM We're now running from %TEMP% — safe to overwrite the original.
 set "ORIG=%~3"
 set "ORIG_DIR=%~dp3"
-pushd "%ORIG_DIR%"
+REM The .bat may live next to the cloned repo rather than inside it
+REM (e.g. user keeps resonanceforge.bat on the Desktop and the repo at
+REM Desktop\ResonanceForge\). Resolve REPO_DIR to whichever location
+REM actually contains a .git directory.
+set "REPO_DIR=%ORIG_DIR%"
+if not exist "%REPO_DIR%.git" (
+    if exist "%ORIG_DIR%ResonanceForge\.git" (
+        set "REPO_DIR=%ORIG_DIR%ResonanceForge\"
+    )
+)
+if not exist "%REPO_DIR%.git" (
+    echo [ERROR] No git repo found at "%ORIG_DIR%" or "%ORIG_DIR%ResonanceForge\".
+    echo         Run option 1 ^(Setup^) first, or move resonanceforge.bat
+    echo         into the cloned ResonanceForge folder.
+    pause
+    exit /b 1
+)
+pushd "%REPO_DIR%"
 git fetch origin %BRANCH% || (popd & echo Update failed. & pause & exit /b 1)
 git pull origin %BRANCH% || (popd & echo Update failed. & pause & exit /b 1)
 popd
-if exist "%ORIG_DIR%.venv\Scripts\python.exe" (
-    "%ORIG_DIR%.venv\Scripts\python.exe" -m pip install -e "%ORIG_DIR%[gui]"
+if exist "%REPO_DIR%.venv\Scripts\python.exe" (
+    "%REPO_DIR%.venv\Scripts\python.exe" -m pip install --no-cache-dir -e "%REPO_DIR%[gui]"
 ) else (
     echo [WARN] venv missing; run Setup after relaunch.
 )
