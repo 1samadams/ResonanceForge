@@ -10,8 +10,12 @@ dependencies = [
     "pyloudnorm>=0.1.1",
 ]
 
+[project.optional-dependencies]
+gui = ["tkinterdnd2>=0.4"]
+
 [project.scripts]
 resonanceforge = "resonanceforge.cli:main"
+resonanceforge-gui = "resonanceforge.gui:main"
 
 [build-system]
 requires = ["setuptools>=68"]
