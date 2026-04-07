@@ -2,19 +2,22 @@
 name = "resonanceforge"
 version = "0.2.0"
 description = "Mastering / post-production DSP pipeline"
-requires-python = ">=3.10"
-# Pinned for mastering reproducibility — bump deliberately.
+requires-python = ">=3.10,<3.14"
+# Loose lower bounds — strict pins broke installs on Python 3.13 because
+# there were no prebuilt wheels for the pinned versions. We allow newer
+# minors so pip always finds a wheel; lock with a constraints file when
+# you need byte-exact mastering reproducibility.
 dependencies = [
-    "numpy==1.26.4",
-    "soundfile==0.12.1",
-    "pedalboard==0.9.12",
-    "pyloudnorm==0.1.1",
-    "scipy==1.11.4",
+    "numpy>=1.26,<3",
+    "soundfile>=0.12",
+    "pedalboard>=0.9",
+    "pyloudnorm>=0.1.1",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
-gui = ["tkinterdnd2==0.4.2", "sv-ttk==2.6.0"]
-metadata = ["mutagen==1.47.0"]
+gui = ["tkinterdnd2>=0.4", "sv-ttk>=2.6"]
+metadata = ["mutagen>=1.47"]
 test = ["pytest>=8.0"]
 
 [project.scripts]
